@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🎮 FIFA Voice Call</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #111;
+      color: #fff;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 2.2em;
+      margin-bottom: 0.3em;
+    }
+
+    p {
+      font-size: 1em;
+      margin-bottom: 1.5em;
+      color: #ccc;
+    }
+
+    button {
+      background: #00bcd4;
+      color: white;
+      border: none;
+      padding: 0.8em 1.2em;
+      font-size: 1em;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background 0.3s ease;
+      margin: 0.3em;
+    }
+
+    button:hover {
+      background: #0097a7;
+    }
+
+    dialog {
+      border: none;
+      border-radius: 10px;
+      padding: 1em 2em;
+      background: #222;
+      color: #fff;
+      width: 90%;
+      max-width: 400px;
+      margin: auto;
+    }
+
+    input {
+      width: 100%;
+      padding: 0.6em;
+      font-size: 1em;
+      border-radius: 6px;
+      margin: 1em 0;
+      border: 1px solid #444;
+      background: #333;
+      color: white;
+    }
+
+    #audioVisualizer {
+      height: 60px;
+      background: #000;
+      margin-top: 1em;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    audio {
+      width: 100%;
+      margin-top: 1em;
+    }
+
+    footer {
+      position: fixed;
+      bottom: 10px;
+      font-size: 0.8em;
+      color: #666;
+    }
+
+    hr {
+      border-color: #444;
+      margin: 1em 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎮 FIFA Voice Link</h1>
+    <p>Connect with your friends while gaming — no server needed!</p>
+    <button id="startCallBtn">📞 Start a Call</button>
+  </div>
+
+  <dialog id="callDialog">
+    <h2>🔗 Invite a Friend</h2>
+    <p>Share this link:</p>
+    <input type="text" id="callLink" readonly />
+    <button id="copyLinkBtn">📋 Copy</button>
+
+    <hr />
+    <p id="status">⏳ Waiting for peer to connect...</p>
+
+    <div id="audioVisualizer"></div>
+    <audio id="remoteAudio" autoplay controls></audio>
+    <p id="ipInfo"></p>
+
+    <button onclick="window.location.href='/'">❌ End Call</button>
+  </dialog>
+
+  <footer>
+    Built for gamers. 100% P2P. Open Source.
+  </footer>
+
+  <script>
+    const startCallBtn = document.getElementById('startCallBtn');
+    const callDialog = document.getElementById('callDialog');
+    const callLink = document.getElementById('callLink');
+    const copyLinkBtn = document.getElementById('copyLinkBtn');
+    const remoteAudio = document.getElementById('remoteAudio');
+    const statusText = document.getElementById('status');
+    const ipInfo = document.getElementById('ipInfo');
+    const audioVisualizer = document.getElementById('audioVisualizer');
+
+    let localConnection;
+    let remoteConnection;
+    let localStream;
+    let peerId = (Math.random() + 1).toString(36).substring(7);
+
+    const isCaller = !location.search.includes('call=');
+    const currentId = new URLSearchParams(location.search).get('call') || peerId;
+
+    startCallBtn.addEventListener('click', () => {
+      const link = `${location.origin}${location.pathname}?call=${peerId}`;
+      callLink.value = link;
+      callDialog.showModal();
+    });
+
+    copyLinkBtn.addEventListener('click', () => {
+      callLink.select();
+      document.execCommand('copy');
+      copyLinkBtn.textContent = 'Copied!';
+    });
+
+    async function setupConnection() {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      pc.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+        statusText.textContent = '✅ Connected!';
+        visualize(event.streams[0]);
+      };
+
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          ipInfo.textContent = `ICE Candidate IP: ${candidate.address || candidate.candidate}`;
+        }
+      };
+
+      return pc;
+    }
+
+    async function startP2P() {
+      localConnection = await setupConnection();
+
+      if (isCaller) {
+        const offer = await localConnection.createOffer();
+        await localConnection.setLocalDescription(offer);
+        window.localStorage.setItem(`signal-${currentId}`, JSON.stringify(offer));
+      } else {
+        remoteConnection = await setupConnection();
+
+        const offerData = window.localStorage.getItem(`signal-${currentId}`);
+        if (!offerData) return;
+        const offer = JSON.parse(offerData);
+        await remoteConnection.setRemoteDescription(offer);
+
+        const answer = await remoteConnection.createAnswer();
+        await remoteConnection.setLocalDescription(answer);
+        localConnection = remoteConnection;
+        window.localStorage.setItem(`answer-${currentId}`, JSON.stringify(answer));
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      if (!isCaller) {
+        callDialog.showModal();
+        callLink.value = location.href;
+      }
+
+      await startP2P();
+
+      if (isCaller) {
+        const interval = setInterval(() => {
+          const answer = window.localStorage.getItem(`answer-${currentId}`);
+          if (answer) {
+            clearInterval(interval);
+            localConnection.setRemoteDescription(JSON.parse(answer));
+          }
+        }, 1000);
+      }
+    });
+
+    function visualize(stream) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      src.connect(analyser);
+      analyser.fftSize = 256;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      const canvas = document.createElement('canvas');
+      canvas.width = audioVisualizer.clientWidth;
+      canvas.height = audioVisualizer.clientHeight;
+      audioVisualizer.appendChild(canvas);
+      const canvasCtx = canvas.getContext('2d');
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+
+        canvasCtx.fillStyle = '#000';
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = dataArray[i];
+          canvasCtx.fillStyle = `rgb(${barHeight + 100},50,50)`;
+          canvasCtx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
+          x += barWidth + 1;
+        }
+      }
+      draw();
+    }
+  </script>
+</body>
+</html>
